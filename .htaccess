@@ -1,0 +1,21 @@
+
+# Ensure .tsx files are treated as JavaScript modules
+<IfModule mod_mime.c>
+    AddType application/javascript .tsx
+    AddType application/json .json
+</IfModule>
+
+RewriteEngine On
+RewriteBase /
+RewriteRule ^index\.html$ - [L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /index.html [L]
+
+# Security and Cache Headers
+<IfModule mod_headers.c>
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set X-Content-Type-Options "nosniff"
+    # Allow cross-origin for ESM modules
+    Header set Access-Control-Allow-Origin "*"
+</IfModule>
