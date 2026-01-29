@@ -1,0 +1,22 @@
+
+{
+  "short_name": "Arbitra",
+  "name": "Arbitra UK Pro Scanner",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/2533/2533031.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/2533/2533031.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "background_color": "#020617",
+  "display": "standalone",
+  "theme_color": "#10b981",
+  "orientation": "portrait"
+}

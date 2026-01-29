@@ -1,0 +1,10 @@
+
+{
+  "appId": "com.arbitra.uk",
+  "appName": "Arbitra UK",
+  "webDir": "htdocs",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  }
+}
