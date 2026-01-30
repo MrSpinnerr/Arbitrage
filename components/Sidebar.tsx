@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Sport, OddsFormat, UK_BOOKMAKERS, SiteSettings } from '../types';
 
@@ -7,21 +6,20 @@ interface SidebarProps {
   setActiveTab: (tab: 'dashboard' | 'history' | 'admin') => void;
   selectedSports: Sport[];
   toggleSport: (sport: Sport) => void;
-  isAnalyzing: boolean;
-  onRefresh: () => void;
   oddsFormat: OddsFormat;
   setOddsFormat: (f: OddsFormat) => void;
   excludedBookmakers: string[];
   toggleBookmaker: (b: string) => void;
   siteSettings: SiteSettings;
+  nextScrapeTime: string;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ 
   activeTab, setActiveTab, selectedSports, toggleSport, 
-  isAnalyzing, onRefresh, oddsFormat, setOddsFormat,
-  excludedBookmakers, toggleBookmaker, siteSettings
+  oddsFormat, setOddsFormat,
+  excludedBookmakers, toggleBookmaker, siteSettings, nextScrapeTime
 }) => {
-  const sports = Object.values(Sport);
+  const sports = [Sport.FOOTBALL, Sport.TENNIS, Sport.HORSE_RACING];
 
   return (
     <aside className="w-full lg:w-80 bg-slate-950 text-white lg:min-h-screen p-6 flex flex-col border-r border-slate-900 sticky top-0 h-fit lg:h-screen z-40">
@@ -108,7 +106,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             </div>
 
             <div>
-              <h2 className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em] mb-4">Sports Feed</h2>
+              <h2 className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em] mb-4">Sports Filter</h2>
               <div className="space-y-1">
                 {sports.map((sport) => (
                   <button
@@ -133,27 +131,31 @@ const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       <div className="mt-8 pt-6 border-t border-slate-900">
-        <button
-          onClick={onRefresh}
-          disabled={isAnalyzing || !siteSettings.isScraperActive}
-          className="w-full bg-slate-100 hover:bg-white disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 font-black py-4 rounded-xl transition-all flex items-center justify-center gap-2 shadow-xl"
-        >
-          {!siteSettings.isScraperActive ? (
-            <span className="text-[10px] text-red-500 font-black uppercase">Scraper Offline</span>
-          ) : isAnalyzing ? (
-            <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-          ) : (
-            <>
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              <span>RUN SCANNER</span>
-            </>
-          )}
-        </button>
+        <div className="bg-slate-900/80 p-4 rounded-2xl border border-slate-800">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] font-black text-slate-500 uppercase">Auto-Scraper</span>
+            <div className={`w-2 h-2 rounded-full ${siteSettings.isScraperActive ? 'bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.6)]' : 'bg-red-500'}`}></div>
+          </div>
+          <div className="text-xs font-bold text-slate-400">
+            {siteSettings.isScraperActive ? (
+              <>Next scan in: <span className="text-emerald-400">{nextScrapeTime}</span></>
+            ) : (
+              <span className="text-red-400">Disabled (Enable in CMS)</span>
+            )}
+          </div>
+          <div className="mt-3 pt-3 border-t border-slate-800">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-black text-slate-500 uppercase">API Usage</span>
+              <span className="text-xs font-bold text-white">{siteSettings.scrapeCount || 0}/500</span>
+            </div>
+            <div className="mt-2 w-full bg-slate-950 rounded-full h-2 overflow-hidden">
+              <div 
+                className="bg-gradient-to-r from-emerald-500 to-blue-500 h-full transition-all duration-300"
+                style={{ width: `${((siteSettings.scrapeCount || 0) / 500) * 100}%` }}
+              ></div>
+            </div>
+          </div>
+        </div>
       </div>
     </aside>
   );

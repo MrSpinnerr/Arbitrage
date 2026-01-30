@@ -1,12 +1,53 @@
+// Updated types for real Odds API integration
 
-export interface Odds {
+export enum Sport {
+  FOOTBALL = 'Football',
+  TENNIS = 'Tennis',
+  HORSE_RACING = 'Horse Racing'
+}
+
+export const SPORT_API_KEYS: Record<Sport, string> = {
+  [Sport.FOOTBALL]: 'soccer_epl,soccer_england_championship,soccer_fa_cup',
+  [Sport.TENNIS]: 'tennis_atp,tennis_wta',
+  [Sport.HORSE_RACING]: 'horse_racing_uk'
+};
+
+export type OddsFormat = 'decimal' | 'fractional';
+
+// UK Bookmakers supported by The Odds API
+export const UK_BOOKMAKERS = [
+  'bet365',
+  'williamhill',
+  'ladbrokes',
+  'coral',
+  'paddypower',
+  'skybet',
+  'betfair',
+  'unibet',
+  'betvictor',
+  'matchbook'
+];
+
+export const EXCHANGES = ['betfair', 'matchbook'];
+
+export interface Outcome {
   bookmaker: string;
   price: number;
   label: string;
   link?: string;
 }
 
-export type OddsFormat = 'decimal' | 'fractional';
+export interface SureBet {
+  id: string;
+  sport: Sport;
+  event: string;
+  commenceTime: string;
+  profitPercentage: number;
+  lastUpdated: string;
+  outcomes: Outcome[];
+  discoveryDate?: string;
+  isExpired?: boolean;
+}
 
 export interface SiteSettings {
   appName: string;
@@ -14,46 +55,46 @@ export interface SiteSettings {
   isScraperActive: boolean;
   globalCommission: number;
   alertThreshold: number;
+  lastScrapeTime?: string;
+  scrapeCount?: number;
 }
 
-export interface SureBet {
+export interface OddsAPIResponse {
   id: string;
-  sport: string;
-  event: string;
-  commenceTime: string;
-  profitPercentage: number;
-  outcomes: Odds[];
-  lastUpdated: string;
-  discoveryDate?: string;
-  isManual?: boolean;
+  sport_key: string;
+  sport_title: string;
+  commence_time: string;
+  home_team: string;
+  away_team: string;
+  bookmakers: Array<{
+    key: string;
+    title: string;
+    markets: Array<{
+      key: string;
+      outcomes: Array<{
+        name: string;
+        price: number;
+      }>;
+    }>;
+  }>;
 }
-
-export enum Sport {
-  FOOTBALL = 'Football',
-  TENNIS = 'Tennis',
-  BASKETBALL = 'Basketball',
-  HORSE_RACING = 'Horse Racing',
-  CRICKET = 'Cricket',
-  RUGBY = 'Rugby',
-  GOLF = 'Golf',
-  BOXING = 'Boxing',
-  DARTS = 'Darts',
-  ESPORTS = 'E-Sports'
-}
-
-export const UK_BOOKMAKERS = [
-  'Bet365', 'William Hill', 'Paddy Power', 'SkyBet', 
-  'Ladbrokes', 'Betfair', 'Smarkets', 'Matchbook', 
-  'Unibet', '888Sport', 'Coral', 'Betfred'
-];
-
-export const EXCHANGES = ['Betfair', 'Smarkets', 'Matchbook'];
 
 export const decimalToFractional = (decimal: number): string => {
-  if (decimal <= 1) return "0/1";
-  let numerator = Math.round((decimal - 1) * 100);
-  let denominator = 100;
-  const gcd = (a: number, b: number): number => b ? gcd(b, a % b) : a;
-  const common = gcd(numerator, denominator);
-  return `${numerator/common}/${denominator/common}`;
+  const fractional = decimal - 1;
+  const tolerance = 1.0e-6;
+  let numerator = 1;
+  let denominator = 1;
+  let error = Math.abs(fractional - numerator / denominator);
+
+  while (error > tolerance && denominator < 1000) {
+    if (fractional > numerator / denominator) {
+      numerator++;
+    } else {
+      denominator++;
+      numerator = Math.round(fractional * denominator);
+    }
+    error = Math.abs(fractional - numerator / denominator);
+  }
+
+  return `${numerator}/${denominator}`;
 };

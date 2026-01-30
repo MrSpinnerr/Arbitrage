@@ -1,23 +1,19 @@
-
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { SureBet, Sport, OddsFormat, SiteSettings } from './types.ts';
-import { runDeepScrape } from './services/scraperService.ts';
-import { getHistory, getMarketDatabase, getLastSyncTime, getSiteSettings, saveSiteSettings } from './services/storageService.ts';
-import Sidebar from './components/Sidebar.tsx';
-import BetCard from './components/BetCard.tsx';
-import AdminCMS from './components/AdminCMS.tsx';
-
-const SCRAPE_INTERVAL_MS = 1000 * 60 * 30; // 30 Minutes
+import { SureBet, Sport, OddsFormat, SiteSettings } from './types';
+import { startAutoScraper, stopAutoScraper } from './services/scraperService';
+import { getHistoryByMonth, getMarketDatabase, getLastSyncTime, getSiteSettings, saveSiteSettings, getMonthName } from './services/storageService';
+import Sidebar from './components/Sidebar';
+import BetCard from './components/BetCard';
+import AdminCMS from './components/AdminCMS';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'history' | 'admin'>('dashboard');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [bets, setBets] = useState<SureBet[]>([]);
-  const [history, setHistory] = useState<SureBet[]>([]);
+  const [historyByMonth, setHistoryByMonth] = useState<Record<string, SureBet[]>>({});
+  const [selectedMonth, setSelectedMonth] = useState<string>('');
   const [selectedSports, setSelectedSports] = useState<Sport[]>([]);
-  const [isScraping, setIsScraping] = useState(false);
   const [lastSync, setLastSync] = useState<Date | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [siteSettings, setSiteSettings] = useState<SiteSettings>(getSiteSettings());
   
   const [oddsFormat, setOddsFormat] = useState<OddsFormat>('decimal');
@@ -34,32 +30,37 @@ const App: React.FC = () => {
       (selectedSports.length === 0 || selectedSports.includes(bet.sport as Sport))
     );
     setBets(filtered);
-    setHistory(getHistory());
-    setLastSync(getLastSyncTime());
-  }, [selectedSports]);
-
-  const triggerScraper = useCallback(async () => {
-    if (!siteSettings.isScraperActive) return;
-    setIsScraping(true);
-    setError(null);
-    try {
-      await runDeepScrape(excludedBookmakers);
-      syncFromDB();
-    } catch (err) {
-      setError("Scraper Error: Remote feeds unreachable.");
-    } finally {
-      setIsScraping(false);
+    
+    const monthlyHistory = getHistoryByMonth();
+    setHistoryByMonth(monthlyHistory);
+    
+    // Set first month as selected by default
+    const months = Object.keys(monthlyHistory);
+    if (months.length > 0 && !selectedMonth) {
+      setSelectedMonth(months[0]);
     }
-  }, [excludedBookmakers, syncFromDB, siteSettings.isScraperActive]);
+    
+    setLastSync(getLastSyncTime());
+  }, [selectedSports, selectedMonth]);
 
+  // Start auto-scraper on component mount
   useEffect(() => {
     syncFromDB();
-    const interval = setInterval(() => {
-      triggerScraper();
-    }, SCRAPE_INTERVAL_MS);
-    if (getMarketDatabase().length === 0) triggerScraper();
-    return () => clearInterval(interval);
-  }, [triggerScraper, syncFromDB]);
+    
+    if (siteSettings.isScraperActive) {
+      startAutoScraper();
+    }
+
+    // Refresh UI every 30 seconds to update display
+    const uiInterval = setInterval(() => {
+      syncFromDB();
+    }, 30000);
+
+    return () => {
+      clearInterval(uiInterval);
+      stopAutoScraper();
+    };
+  }, [siteSettings.isScraperActive, syncFromDB]);
 
   const toggleSport = (sport: Sport) => {
     setSelectedSports(prev => 
@@ -76,6 +77,13 @@ const App: React.FC = () => {
   const handleUpdateSettings = (newSettings: SiteSettings) => {
     setSiteSettings(newSettings);
     saveSiteSettings(newSettings);
+    
+    // Restart auto-scraper if settings changed
+    if (newSettings.isScraperActive) {
+      startAutoScraper();
+    } else {
+      stopAutoScraper();
+    }
   };
 
   const handleLogin = (e: React.FormEvent<HTMLFormElement>) => {
@@ -94,6 +102,14 @@ const App: React.FC = () => {
     return diff === 0 ? "Just now" : `${diff}m ago`;
   }, [lastSync, bets]);
 
+  const nextScrapeTime = useMemo(() => {
+    if (!lastSync || !siteSettings.isScraperActive) return "Scraper disabled";
+    const nextScrape = new Date(lastSync.getTime() + 88 * 60 * 1000);
+    const diff = Math.floor((nextScrape.getTime() - new Date().getTime()) / 60000);
+    if (diff <= 0) return "Running now...";
+    return `${diff}m`;
+  }, [lastSync, siteSettings.isScraperActive]);
+
   return (
     <div className="flex flex-col lg:flex-row min-h-screen bg-slate-950 text-slate-100 selection:bg-emerald-500/30">
       <Sidebar 
@@ -101,13 +117,12 @@ const App: React.FC = () => {
         setActiveTab={setActiveTab}
         selectedSports={selectedSports} 
         toggleSport={toggleSport} 
-        isAnalyzing={isScraping}
-        onRefresh={triggerScraper}
         oddsFormat={oddsFormat}
         setOddsFormat={setOddsFormat}
         excludedBookmakers={excludedBookmakers}
         toggleBookmaker={toggleBookmaker}
         siteSettings={siteSettings}
+        nextScrapeTime={nextScrapeTime}
       />
 
       <main className="flex-1 p-4 lg:p-10 overflow-y-auto">
@@ -148,16 +163,18 @@ const App: React.FC = () => {
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-1">
                   <h2 className="text-sm font-bold text-slate-500 uppercase tracking-widest">Market Feed</h2>
-                  <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border animate-pulse ${
-                    isScraping ? 'bg-amber-500/10 text-amber-500 border-amber-500/20' : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
+                  <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${
+                    siteSettings.isScraperActive ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20 animate-pulse' : 'bg-red-500/10 text-red-500 border-red-500/20'
                   }`}>
-                    {isScraping ? 'Scraper Active' : 'Database Standby'}
+                    {siteSettings.isScraperActive ? 'Auto-Scraper Active' : 'Scraper Disabled'}
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-3xl font-black text-white">Live UK Scanner</span>
                   <div className="flex items-center gap-2 bg-slate-900 px-3 py-1 rounded-full border border-slate-800">
-                    <span className="text-[10px] font-black text-slate-400 uppercase">Last DB Update: <span className="text-blue-400">{timeSinceSync}</span></span>
+                    <span className="text-[10px] font-black text-slate-400 uppercase">Last: <span className="text-blue-400">{timeSinceSync}</span></span>
+                    <span className="text-slate-700">•</span>
+                    <span className="text-[10px] font-black text-slate-400 uppercase">Next: <span className="text-emerald-400">{nextScrapeTime}</span></span>
                   </div>
                 </div>
               </div>
@@ -178,96 +195,99 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {error && (
-              <div className="mb-8 p-4 bg-red-600/10 border border-red-500/20 rounded-2xl text-xs font-bold text-red-500">
-                {error}
-              </div>
-            )}
-
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
               <div className="bg-slate-900/50 p-6 rounded-3xl border border-slate-800 group hover:border-emerald-500/30 transition-all">
-                <div className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-2">DB Pool Size</div>
+                <div className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-2">Active Opportunities</div>
                 <div className="flex items-end gap-3">
                   <span className="text-6xl font-black text-white leading-none">{bets.length}</span>
                 </div>
               </div>
               <div className="bg-slate-900/50 p-6 rounded-3xl border border-slate-800 group hover:border-orange-500/30 transition-all">
-                <div className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-2">Max DB Yield</div>
+                <div className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-2">Max Yield</div>
                 <div className="flex items-end gap-3">
                   <span className="text-6xl font-black text-orange-500 leading-none">
                     {bets.length > 0 ? Math.max(...bets.map(b => b.profitPercentage)).toFixed(1) : '0'}
                   </span>
+                  <span className="text-2xl font-black text-slate-500 mb-2">%</span>
                 </div>
               </div>
               <div className="bg-slate-900/50 p-6 rounded-3xl border border-slate-800 group hover:border-blue-500/30 transition-all">
-                <div className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-2">Audit Capacity</div>
+                <div className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-2">API Scrapes</div>
                 <div className="flex items-end gap-3">
-                  <span className="text-6xl font-black text-white leading-none">{history.length}</span>
+                  <span className="text-6xl font-black text-white leading-none">{siteSettings.scrapeCount || 0}</span>
+                  <span className="text-lg font-black text-slate-500 mb-3">/500</span>
                 </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-10">
-              <div className="xl:col-span-2 space-y-8">
-                {bets.length === 0 && !isScraping && (
-                  <div className="py-20 text-center border-2 border-dashed border-slate-800 rounded-3xl">
-                    <p className="text-slate-500 font-bold uppercase tracking-widest text-xs">No active arbitrage opportunities found.</p>
-                    <button onClick={triggerScraper} className="mt-4 px-6 py-2 bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase">Run Deep Scan</button>
-                  </div>
-                )}
-                <div className="grid grid-cols-1 gap-8 pb-10">
-                  {bets.map((bet) => (
-                    <BetCard 
-                      key={bet.id} 
-                      bet={bet} 
-                      oddsFormat={oddsFormat} 
-                      exchangeCommission={exchangeCommission}
-                    />
-                  ))}
+            <div className="grid grid-cols-1 gap-8 pb-10">
+              {bets.length === 0 && (
+                <div className="py-20 text-center border-2 border-dashed border-slate-800 rounded-3xl">
+                  <p className="text-slate-500 font-bold uppercase tracking-widest text-xs">
+                    {siteSettings.isScraperActive ? 'Scanning markets... Check back in a few minutes.' : 'Auto-scraper is disabled. Enable in CMS.'}
+                  </p>
                 </div>
-              </div>
-              <div className="bg-slate-900/50 p-6 rounded-[2rem] border border-slate-800 backdrop-blur-md sticky top-10 h-fit hidden xl:block">
-                <h3 className="text-sm font-black text-white uppercase tracking-widest mb-6">Database Audit</h3>
-                <div className="space-y-4">
-                  {history.slice(0, 6).map((item, i) => (
-                    <div key={i} className="flex items-center gap-4 bg-slate-950/40 p-4 rounded-2xl border border-slate-800/50">
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-[10px] ${
-                        item.profitPercentage > siteSettings.alertThreshold ? 'bg-orange-500/20 text-orange-500' : 'bg-emerald-500/20 text-emerald-500'
-                      }`}>
-                        {item.profitPercentage.toFixed(1)}%
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[11px] font-black text-slate-200 uppercase truncate">{item.event}</div>
-                        <div className="text-[9px] text-slate-600 font-bold uppercase">{new Date(item.discoveryDate || '').toLocaleTimeString()}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              )}
+              {bets.map((bet) => (
+                <BetCard 
+                  key={bet.id} 
+                  bet={bet} 
+                  oddsFormat={oddsFormat} 
+                  exchangeCommission={exchangeCommission}
+                />
+              ))}
             </div>
           </>
         ) : (
           <div className="max-w-5xl mx-auto">
-            <h1 className="text-4xl font-black text-white mt-1 mb-8 tracking-tight">Sync History & Logs</h1>
+            <h1 className="text-4xl font-black text-white mt-1 mb-8 tracking-tight">Historical Opportunities</h1>
+            
+            {/* Month Tabs */}
+            {Object.keys(historyByMonth).length > 0 && (
+              <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
+                {Object.keys(historyByMonth).map(monthKey => (
+                  <button
+                    key={monthKey}
+                    onClick={() => setSelectedMonth(monthKey)}
+                    className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-wider whitespace-nowrap transition-all ${
+                      selectedMonth === monthKey 
+                        ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/20' 
+                        : 'bg-slate-900 text-slate-500 border border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    {getMonthName(monthKey)}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div className="grid grid-cols-1 gap-4">
-              {history.map((bet, i) => (
-                <div key={bet.id + i} className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-6 hover:border-slate-700 transition-all group">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-3">
-                      <span className={`text-[9px] font-black uppercase px-2 py-1 rounded ${
-                        bet.profitPercentage > siteSettings.alertThreshold ? 'bg-orange-500/10 text-orange-500' : 'bg-emerald-500/10 text-emerald-400'
-                      }`}>{bet.sport}</span>
-                      <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">{new Date(bet.discoveryDate || '').toLocaleString()}</span>
-                    </div>
-                    <h3 className="text-xl font-black text-white group-hover:text-emerald-400 transition-colors">{bet.event}</h3>
-                  </div>
-                  <div className="text-right flex flex-col items-end justify-center bg-slate-950 p-6 rounded-2xl border border-slate-800 min-w-[140px]">
-                    <div className={`text-3xl font-black ${bet.profitPercentage > siteSettings.alertThreshold ? 'text-orange-500' : 'text-emerald-500'}`}>
-                      +{bet.profitPercentage.toFixed(2)}%
-                    </div>
-                  </div>
+              {!selectedMonth || !historyByMonth[selectedMonth] || historyByMonth[selectedMonth].length === 0 ? (
+                <div className="py-20 text-center border-2 border-dashed border-slate-800 rounded-3xl">
+                  <p className="text-slate-500 font-bold uppercase tracking-widest text-xs">No historical data for this period</p>
                 </div>
-              ))}
+              ) : (
+                historyByMonth[selectedMonth].map((bet, i) => (
+                  <div key={bet.id + i} className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-6 hover:border-slate-700 transition-all group">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-3">
+                        <span className={`text-[9px] font-black uppercase px-2 py-1 rounded ${
+                          bet.profitPercentage > siteSettings.alertThreshold ? 'bg-orange-500/10 text-orange-500' : 'bg-emerald-500/10 text-emerald-400'
+                        }`}>{bet.sport}</span>
+                        <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
+                          {new Date(bet.discoveryDate || bet.lastUpdated).toLocaleString('en-GB')}
+                        </span>
+                      </div>
+                      <h3 className="text-xl font-black text-white group-hover:text-emerald-400 transition-colors">{bet.event}</h3>
+                    </div>
+                    <div className="text-right flex flex-col items-end justify-center bg-slate-950 p-6 rounded-2xl border border-slate-800 min-w-[140px]">
+                      <div className={`text-3xl font-black ${bet.profitPercentage > siteSettings.alertThreshold ? 'text-orange-500' : 'text-emerald-500'}`}>
+                        +{bet.profitPercentage.toFixed(2)}%
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         )}
